@@ -63,11 +63,15 @@ public:
     }
 
     void close() {
-        std::lock_guard<std::mutex> lock(sync_mutex_);
+        std::unique_lock<std::mutex> lock(sync_mutex_);
         toBeClosed_ = true;
+        
         if (is_empty()) {
             closed_ = true;
         }
+
+        lock.unlock(); // Unlock the mutex before notifying
+
         consumer_cv_.notify_all();
         producer_cv_.notify_all();
     }
@@ -75,7 +79,7 @@ private:
     std::unique_ptr<Type> getter(std::unique_lock<std::mutex> lock) {
         std::unique_ptr<Type> item = nullptr;
         
-        consumer_cv_.wait(lock, [this] { return closed_ || toBeClosed_ || !is_empty(); });
+        consumer_cv_.wait(lock, [this] { return closed_ || !is_empty(); });
 
         if (!closed_) {
             size_t tail_current = tail_;
@@ -162,9 +166,11 @@ std::unique_ptr<Type> try_get() {
 
 
 void close() {
-    std::lock_guard<std::mutex> lock(sync_mutex_);
+    std::unique_lock<std::mutex> lock(sync_mutex_);
 
     closed_ = true;
+
+    lock.unlock(); // Unlock the mutex before notifying
     
     consumer_cv_.notify_one();
     producer_cv_.notify_one();

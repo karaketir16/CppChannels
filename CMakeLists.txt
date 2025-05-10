@@ -11,7 +11,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 add_library(ChannelLib INTERFACE)
 
 # Include the header file directory
-target_include_directories(ChannelLib INTERFACE ${CMAKE_SOURCE_DIR}/include)
+target_include_directories(ChannelLib INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
 # Add Google Test
 find_package(GTest REQUIRED)
