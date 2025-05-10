@@ -55,6 +55,9 @@ TYPED_TEST_P(ChannelTest, MultithreadedAddAndGet) {
     const size_t num_elements = 100;
     std::vector<std::thread> threads;
 
+    std::cerr << "Starting multithreaded test with " << num_threads << " threads and " << num_elements << " elements.";
+    std::cerr << "Channel size: " << N;
+
     // Producer threads
     for (size_t i = 0; i < num_threads; ++i) {
         threads.emplace_back([this, num_elements]() {
