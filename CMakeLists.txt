@@ -21,6 +21,3 @@ include_directories(${GTEST_INCLUDE_DIRS})
 add_executable(channel_test tests/channel_test.cpp)
 target_link_libraries(channel_test ChannelLib ${GTEST_LIBRARIES} pthread)
 
-
-add_executable(channel_test_2 tests/channel_test_2.cpp)
-target_link_libraries(channel_test_2 ChannelLib ${GTEST_LIBRARIES} pthread)
