@@ -62,8 +62,8 @@ public:
         if (queue_.empty()) {
             closed_ = true;
         }
-        consumer_cv_.notify_one();
-        producer_cv_.notify_one();
+        consumer_cv_.notify_all();
+        producer_cv_.notify_all();
     }
 private:
     std::unique_ptr<Type> getter(std::unique_lock<std::mutex> lock) {
@@ -75,6 +75,7 @@ private:
 
         if (toBeClosed_ && (queue_.size() == 1)) {
             closed_ = true;
+            consumer_cv_.notify_all();
         }
 
         producer_cv_.notify_one();

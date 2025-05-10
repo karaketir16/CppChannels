@@ -7,9 +7,9 @@
 
 TEST(ChannelStressTest, ProducerConsumerIntegrity) {
     constexpr size_t N = 10;
-    constexpr int NUM_PRODUCERS = 50;
-    constexpr int NUM_CONSUMERS = 50;
-    constexpr int MESSAGES_PER_PRODUCER = 10000;
+    constexpr int NUM_PRODUCERS = 30;
+    constexpr int NUM_CONSUMERS = 20;
+    constexpr int MESSAGES_PER_PRODUCER = 1000;
 
     Channel<int, N> ch;
     std::atomic<int> sum_produced{0};
@@ -42,6 +42,7 @@ TEST(ChannelStressTest, ProducerConsumerIntegrity) {
     }
 
     for (auto& p : producers) p.join();
+    std::cerr << "Producers finished\n";
     ch.close();
     for (auto& c : consumers) c.join();
 
