@@ -13,8 +13,8 @@
 template <typename Type, size_t N>
 class Channel {
 public:
-    explicit Channel(Type DefaultObj = Type())
-        : default_(DefaultObj), emptySlots(N), fullSlots(0) {}
+    explicit Channel()
+        : emptySlots(N), fullSlots(0) {}
 
     template <typename U>
     void add(U&& var) {
@@ -44,18 +44,15 @@ public:
         cv_.notify_all();
     }
 
-    Type get(bool& result) {
+    std::unique_ptr<Type> get() {
         emptySlots.release();
 
         std::unique_lock<std::mutex> lock(mutex_);
         cv_.wait(lock, [this] { return closed_ || fullSlots.try_acquire(); });
 
         if (closed_) {
-            result = false;
-            return default_;
+            return nullptr;
         }
-
-        result = true;
 
         if (toBeClosed_ && (queue_.size() == 1)) {
             closed_ = true;
@@ -64,22 +61,15 @@ public:
         if constexpr (std::is_move_constructible_v<Type>) {
             auto item = queue_.front().release();
             queue_.pop();
-            return std::move(*item);
+            return std::make_unique<Type>(std::move(*item));
         } else {
             auto item = queue_.front();
             queue_.pop();
-            return *item;
+            return std::make_unique<Type>(*item);
         }
     }
 
-    using TupleType = std::tuple<Type, bool>;
-    TupleType get() {
-        bool tmp;
-        return {get(tmp), tmp};
-    }
-
 private:
-    const Type default_;
     using QueueType = std::conditional_t<
         std::is_move_constructible_v<Type>,
         std::queue<std::unique_ptr<Type>>,

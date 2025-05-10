@@ -26,29 +26,26 @@ TYPED_TEST_P(ChannelTest, AddAndGet) {
     using T = typename TypeParam::Type;
     const size_t N = TypeParam::Size;
 
-    T value = T();
 
-    std::thread thread_([this,value](){    
-        this->channel.add(value);
+    std::thread thread_([this](){    
+        this->channel.add(T());
     });
 
-    bool result;
-    T retrieved = this->channel.get(result);
+    std::unique_ptr<T> retrieved = this->channel.get();
 
     thread_.join();
-
-    EXPECT_TRUE(result);
-    EXPECT_EQ(retrieved, value);
+    
+    EXPECT_TRUE(retrieved);
+    EXPECT_EQ(*retrieved.get(), T());
 }
 
 TYPED_TEST_P(ChannelTest, CloseChannel) {
     using T = typename TypeParam::Type;
     const size_t N = TypeParam::Size;
     this->channel.close();
-    bool result;
-    T retrieved = this->channel.get(result);
-    EXPECT_FALSE(result);
-    EXPECT_EQ(retrieved, T());
+
+    std::unique_ptr<T> retrieved = this->channel.get();
+    EXPECT_FALSE(retrieved);
 }
 
 TYPED_TEST_P(ChannelTest, MultithreadedAddAndGet) {
@@ -71,9 +68,8 @@ TYPED_TEST_P(ChannelTest, MultithreadedAddAndGet) {
     for (size_t i = 0; i < num_threads; ++i) {
         threads.emplace_back([this, num_elements]() {
             for (size_t j = 0; j < num_elements; ++j) {
-                bool result;
-                T retrieved = this->channel.get(result);
-                EXPECT_TRUE(result);
+                std::unique_ptr<T> retrieved = this->channel.get();
+                EXPECT_TRUE(retrieved);
             }
         });
     }
@@ -83,10 +79,9 @@ TYPED_TEST_P(ChannelTest, MultithreadedAddAndGet) {
     }
 
     this->channel.close();
-    bool result;
-    T retrieved = this->channel.get(result);
-    EXPECT_FALSE(result);
-    EXPECT_EQ(retrieved, T());
+
+    std::unique_ptr<T> retrieved = this->channel.get();
+    EXPECT_FALSE(retrieved);
 }
 
 TYPED_TEST_P(ChannelTest, LoopTest) {
@@ -106,7 +101,7 @@ TYPED_TEST_P(ChannelTest, LoopTest) {
 
     // Consumer thread
     threads.emplace_back([this]() {
-        for (auto [val, res] = this->channel.get(); res; val = this->channel.get(res)) {
+        for (auto val = this->channel.get(); val; val = this->channel.get()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     });
@@ -116,9 +111,70 @@ TYPED_TEST_P(ChannelTest, LoopTest) {
     }
 }
 
+
+struct CopyableOnly {
+    int value;
+
+    explicit CopyableOnly(int v = 0) : value(v) {}
+
+    // Allow copy
+    CopyableOnly(const CopyableOnly&) = default;
+    CopyableOnly& operator=(const CopyableOnly&) = default;
+
+    // Delete move
+    CopyableOnly(CopyableOnly&&) = delete;
+    CopyableOnly& operator=(CopyableOnly&&) = delete;
+
+    bool operator==(const CopyableOnly& other) const {
+        return value == other.value;
+    }
+};
+
+struct MoveableOnly {
+    int value;
+
+    explicit MoveableOnly(int v = 0) : value(v) {}
+
+    // Delete copy
+    MoveableOnly(const MoveableOnly&) = delete;
+    MoveableOnly& operator=(const MoveableOnly&) = delete;
+
+    // Allow move
+    MoveableOnly(MoveableOnly&& other) noexcept : value(other.value) {
+        other.value = -1; // indicate "moved from"
+    }
+
+    MoveableOnly& operator=(MoveableOnly&& other) noexcept {
+        if (this != &other) {
+            value = other.value;
+            other.value = -1;
+        }
+        return *this;
+    }
+
+    bool operator==(const MoveableOnly& other) const {
+        return value == other.value;
+    }
+};
+
+
+
 REGISTER_TYPED_TEST_SUITE_P(ChannelTest, AddAndGet, CloseChannel, MultithreadedAddAndGet, LoopTest);
 
-using MyTypes = ::testing::Types<ChannelParams<int, 10>, ChannelParams<std::string, 10>, ChannelParams<int, 0>>;
+using MyTypes = ::testing::Types<
+    ChannelParams<int, 10>, 
+    ChannelParams<std::string, 10>, 
+    ChannelParams<int, 0>, 
+    ChannelParams<CopyableOnly, 10>,
+    ChannelParams<MoveableOnly, 10>,
+    ChannelParams<std::unique_ptr<int>, 10>,
+    ChannelParams<std::shared_ptr<int>, 10>,
+    ChannelParams<std::vector<int>, 10>,
+    ChannelParams<std::vector<std::string>, 10>,
+    ChannelParams<std::vector<MoveableOnly>, 10>,
+    ChannelParams<std::vector<CopyableOnly>, 10>
+>;
+// Register the test suite with the types
 INSTANTIATE_TYPED_TEST_SUITE_P(My, ChannelTest, MyTypes);
 
 int main(int argc, char **argv) {
