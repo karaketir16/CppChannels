@@ -2,13 +2,10 @@
 #define CHANNEL_H
 
 #include <iostream>
-#include <queue>
-#include <semaphore>
 #include <mutex>
-#include <tuple>
 #include <condition_variable>
-#include <cassert>
-
+#include <atomic>
+#include <memory>
 
 class ChannelBase {
 protected:
@@ -21,20 +18,32 @@ protected:
 // Channel class template
 template <typename Type, size_t N>
 class Channel : public ChannelBase {
+    std::unique_ptr<Type> array[N];
+    std::atomic<size_t> head_ = 0;
+    std::atomic<size_t> tail_ = 0;
+
+    bool is_full() const {
+        return array[head_] != nullptr;
+    }
+
+    bool is_empty() const {
+        return array[tail_] == nullptr;
+    }
+
+    bool toBeClosed_ = false;
+
 public:
 
     template <typename U>
     bool add(U&& var) {
         std::unique_lock<std::mutex> lock(sync_mutex_);
-
         return adder(std::forward<U>(var), std::move(lock));
     }
 
     template <typename U>
     bool try_add(U&& var) {
-        std::lock_guard<std::mutex> lock(sync_mutex_);
-
-        if (queue_.size() == N) {
+        std::unique_lock<std::mutex> lock(sync_mutex_);
+        if (is_full()) {
             return false; // Channel is full
         }
         return adder(std::forward<U>(var), std::move(lock));
@@ -42,24 +51,21 @@ public:
 
     std::unique_ptr<Type> get() {
         std::unique_lock<std::mutex> lock(sync_mutex_);
-
         return getter(std::move(lock));
     }
 
     std::unique_ptr<Type> try_get() {
         std::unique_lock<std::mutex> lock(sync_mutex_);
-
-        if (queue_.empty()) {
+        if (is_empty()) {
             return nullptr; // Channel is empty
         }
-
         return getter(std::move(lock));
     }
 
     void close() {
         std::lock_guard<std::mutex> lock(sync_mutex_);
         toBeClosed_ = true;
-        if (queue_.empty()) {
+        if (is_empty()) {
             closed_ = true;
         }
         consumer_cv_.notify_all();
@@ -67,51 +73,54 @@ public:
     }
 private:
     std::unique_ptr<Type> getter(std::unique_lock<std::mutex> lock) {
-        consumer_cv_.wait(lock, [this] { return closed_ || !queue_.empty(); });
+        std::unique_ptr<Type> item = nullptr;
+        
+        consumer_cv_.wait(lock, [this] { return closed_ || toBeClosed_ || !is_empty(); });
 
-        if (closed_) {
-            return nullptr;
+        if (!closed_) {
+            size_t tail_current = tail_;
+            tail_ = (tail_ + 1) % N;
+
+            bool lastOne = is_empty(); //if next is empty this one is the last one
+
+            if (toBeClosed_ && lastOne) {
+                closed_ = true;
+                consumer_cv_.notify_all();
+            }
+
+            item = std::move(array[tail_current]);
+
+            lock.unlock(); // Unlock the mutex before notifying 
+
+            producer_cv_.notify_one();
         }
 
-        if (toBeClosed_ && (queue_.size() == 1)) {
-            closed_ = true;
-            consumer_cv_.notify_all();
-        }
-
-        producer_cv_.notify_one();
-
-        if constexpr (std::is_move_constructible_v<Type>) {
-            auto item = queue_.front().release();
-            queue_.pop();
-            return std::make_unique<Type>(std::move(*item));
-        } else {
-            auto item = queue_.front().release();
-            queue_.pop();
-            return std::make_unique<Type>(*item);
-        }
+        return item;
     }
-    
+
     template <typename U>
     bool adder(U&& var, std::unique_lock<std::mutex> lock) {
-        producer_cv_.wait(lock, [this] { return closed_ || toBeClosed_ || queue_.size() < N; });
+        
+        producer_cv_.wait(lock, [this] { return closed_ || toBeClosed_ || !is_full(); });
+        
+        size_t head_local = head_;
+        head_ = (head_ + 1) % N;
 
         if (closed_ || toBeClosed_) {
             return false;
         }
-
+        
         if constexpr (std::is_move_constructible_v<Type>) {
-            queue_.emplace(std::make_unique<Type>(std::forward<U>(var)));
+            array[head_local] = std::make_unique<Type>(std::forward<U>(var));
         } else {
-            queue_.emplace(std::make_unique<Type>(var));
+            array[head_local] = std::make_unique<Type>(var);
         }
+        
+        lock.unlock(); // Unlock the mutex before notifying
         
         consumer_cv_.notify_one();
         return true;
     }
-    using QueueType = std::queue<std::unique_ptr<Type>>;
-
-    QueueType queue_;
-    bool toBeClosed_ = false;
 };
 
 
@@ -129,8 +138,8 @@ public:
     template <typename U>
     bool try_add(U&& var) {
         std::unique_lock<std::mutex> lock(sync_mutex_);
-        if (producer_waiting_ == 0) {
-            return false;  // no producer waiting
+        if (consumer_waiting_ == 0) {
+            return false;  // no consumer waiting
         }
         return adder(std::forward<U>(var), std::move(lock));
     }
@@ -182,6 +191,8 @@ private:
             item = nullptr;  // Channel closed
         }
 
+        lock.unlock(); // Unlock the mutex before notifying
+
         producer_cv_.notify_one();
 
         return item;
@@ -196,7 +207,6 @@ private:
         producer_cv_.wait(lock, [this] { return closed_ || (consumer_waiting_ > 0 && !handoff_); });
 
         if (closed_) {
-            //assert(false && "Writing to Closed Channel\n");
             return false;
         }
 
@@ -205,10 +215,13 @@ private:
         } else if constexpr (std::is_copy_constructible_v<Type>) {
             handoff_ = std::make_unique<Type>(var);
         } 
+
+        producer_waiting_--;
+
+        lock.unlock(); // Unlock the mutex before notifying
         
         // Wake consumer
         consumer_cv_.notify_one();
-        producer_waiting_--;
         return true;
     }    
 
