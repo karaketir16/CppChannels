@@ -36,7 +36,7 @@ TYPED_TEST_P(ChannelTest, AddAndGet) {
     thread_.join();
     
     EXPECT_TRUE(retrieved);
-    EXPECT_EQ(*retrieved.get(), T());
+    EXPECT_EQ(*retrieved, T());
 }
 
 TYPED_TEST_P(ChannelTest, CloseChannel) {
@@ -45,7 +45,8 @@ TYPED_TEST_P(ChannelTest, CloseChannel) {
     this->channel.close();
 
     std::unique_ptr<T> retrieved = this->channel.get();
-    EXPECT_FALSE(retrieved);
+    EXPECT_FALSE(retrieved); // Should return nullptr
+    EXPECT_EQ(this->channel.add(T()), ChannelBase::Result::CLOSED); // Should fail to add after close
 }
 
 TYPED_TEST_P(ChannelTest, MultithreadedAddAndGet) {
@@ -104,7 +105,7 @@ TYPED_TEST_P(ChannelTest, LoopTest) {
 
     // Consumer thread
     threads.emplace_back([this]() {
-        for (auto val = this->channel.get(); val; val = this->channel.get()) {
+        for (auto val = this->channel.get(); val.operator bool(); val = this->channel.get()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     });
@@ -203,11 +204,11 @@ TEST(ChannelTryAddTryGet, FixedSizeChannel) {
 
     // Test try_add when the channel is not full
     for (int i = 0; i < N; ++i) {
-        EXPECT_TRUE(ch.try_add(i));
+        EXPECT_EQ(ch.try_add(i), ChannelBase::Result::OK);
     }
 
     // Test try_add when the channel is full
-    EXPECT_FALSE(ch.try_add(100));
+    EXPECT_EQ(ch.try_add(100), ChannelBase::Result::FULL);
 
     // Test try_get when the channel is not empty
     for (int i = 0; i < N; ++i) {
@@ -221,8 +222,8 @@ TEST(ChannelTryAddTryGet, FixedSizeChannel) {
 
     // Test behavior after closing the channel
     ch.close();
-    EXPECT_FALSE(ch.try_add(200));
-    EXPECT_FALSE(ch.try_get());
+    EXPECT_EQ(ch.try_add(200), ChannelBase::Result::CLOSED);
+    EXPECT_EQ(ch.try_get(), nullptr);
 }
 
 // Test for Channel<Type, 0> (unbuffered channel)
@@ -251,7 +252,7 @@ TEST(ChannelTryAddTryGet, UnbufferedChannel) {
     // Producer thread
     std::thread producer([&]() {
         producer_started = true;
-        EXPECT_TRUE(ch.try_add(42));  // Should succeed because the consumer is waiting
+        EXPECT_EQ(ch.try_add(42), ChannelBase::Result::OK);  // Should succeed because the consumer is waiting
         producer_finished = true;
     });
 
@@ -267,8 +268,8 @@ TEST(ChannelTryAddTryGet, UnbufferedChannel) {
 
     // Test behavior after closing the channel
     ch.close();
-    EXPECT_FALSE(ch.try_add(100));
-    EXPECT_FALSE(ch.try_get());
+    EXPECT_EQ(ch.try_add(100), ChannelBase::Result::CLOSED);
+    EXPECT_EQ(ch.try_get(), nullptr);
 }
 
 // Test try_add and try_get with multiple producers and consumers
@@ -291,7 +292,7 @@ TEST(ChannelTryAddTryGet, MultiProducerConsumer) {
         producers.emplace_back([&, i]() {
             for (int j = 0; j < MESSAGES_PER_PRODUCER; ++j) {
                 int value = i * MESSAGES_PER_PRODUCER + j;
-                while (!ch.try_add(value)) {
+                while (ch.try_add(value) != ChannelBase::Result::OK) {
                     std::this_thread::yield();  // Retry until successful
                 }
                 sum_produced.fetch_add(value, std::memory_order_relaxed);
@@ -372,14 +373,14 @@ TEST(ChannelStressTest, ProducerConsumerIntegrity) {
 TEST(ChannelBehavior, AddAfterCloseFails) {
     Channel<int, 5> ch;
     ch.close();
-    EXPECT_FALSE(ch.add(10)); // Cannot add after close
+    EXPECT_EQ(ch.add(10), ChannelBase::Result::CLOSED); // Cannot add after close
 }
 
 TEST(ChannelBehavior, GetAfterCloseReturnsNull) {
     Channel<int, 5> ch;
     ch.close();
     auto result = ch.get();
-    EXPECT_FALSE(result);  // Should return nullptr
+    EXPECT_EQ(result, nullptr);  // Should return nullptr
 }
 
 TEST(ChannelUnbuffered, MultipleProducerConsumer) {
@@ -415,8 +416,8 @@ TEST(ChannelTryMethods, StressWithTryAddTryGet) {
     constexpr size_t N = 1;
     Channel<int, N> ch;
 
-    EXPECT_TRUE(ch.try_add(1));
-    EXPECT_FALSE(ch.try_add(2)); // Should be full
+    EXPECT_EQ(ch.try_add(1), ChannelBase::Result::OK); // Should succeed
+    EXPECT_EQ(ch.try_add(2), ChannelBase::Result::FULL); // Should be full
 
     auto val = ch.try_get();
     EXPECT_TRUE(val);

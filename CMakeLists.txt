@@ -21,3 +21,5 @@ include_directories(${GTEST_INCLUDE_DIRS})
 add_executable(channel_test tests/channel_test.cpp)
 target_link_libraries(channel_test ChannelLib ${GTEST_LIBRARIES} pthread)
 
+add_executable(move_copy_test tests/move_copy_test.cpp)
+target_link_libraries(move_copy_test ChannelLib ${GTEST_LIBRARIES} pthread) 
